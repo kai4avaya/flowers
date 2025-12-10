@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" href="data:,"> <!-- Fixes favicon 404 error -->
     <title>Geometric Wireframe Flowers</title>
     <style>
         body {
@@ -137,7 +138,7 @@
         <h1>Flowers</h1>
         <h2>Floating</h2>
     </div>
-    <div id="instructions">Move mouse or touch to disturb the garden</div>
+    <div id="instructions">Tap to sound • Move to disturb • Drag to rotate</div>
     
     <div id="recorder-ui">
         <div id="spiral-container" title="Click to Download Recording">
@@ -150,6 +151,7 @@
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script>
         // --- Configuration ---
         const CONFIG = {
@@ -269,15 +271,22 @@
             ],
 
             init() {
-                if (this.isInit) return;
-                const AudioContext = window.AudioContext || window.webkitAudioContext;
-                this.ctx = new AudioContext();
-                this.isInit = true;
+                // Check if context exists, if not create it
+                if (!this.ctx) {
+                    const AudioContext = window.AudioContext || window.webkitAudioContext;
+                    this.ctx = new AudioContext();
+                    this.isInit = true;
+                    
+                    // Setup Nodes
+                    this.createReverb();
+                    this.setupRecorder();
+                    UISys.init();
+                }
                 
-                // Setup Nodes
-                this.createReverb();
-                this.setupRecorder();
-                UISys.init();
+                // Always try to resume if suspended (must be called from user gesture)
+                if (this.ctx.state === 'suspended') {
+                    this.ctx.resume();
+                }
             },
 
             createReverb() {
@@ -366,7 +375,7 @@
 
             playNote(colorIndex, type) {
                 if (!this.isInit) return;
-                if (this.ctx.state === 'suspended') this.ctx.resume();
+                if (this.ctx.state === 'suspended') return; // Cannot resume outside gesture
 
                 // Update UI Spiral
                 UISys.triggerGrowth();
@@ -416,6 +425,14 @@
         renderer.setSize(window.innerWidth, window.innerHeight);
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.body.appendChild(renderer.domElement);
+
+        // --- Controls ---
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.enableZoom = true;
+        controls.autoRotate = true;
+        controls.autoRotateSpeed = 0.5;
 
         // --- Interaction State ---
         const mouse = new THREE.Vector2(-100, -100);
@@ -567,10 +584,13 @@
             mouse.x = (x / window.innerWidth) * 2 - 1;
             mouse.y = -(y / window.innerHeight) * 2 + 1;
             
-            if (!AudioSys.isInit) {
-                AudioSys.init();
-            }
+            // REMOVED auto-init to prevent console warnings
         }
+
+        // Global handler to unlock audio on first interaction
+        const unlockAudio = () => {
+            AudioSys.init();
+        };
 
         window.addEventListener('mousemove', (e) => {
             updateMouse(e.clientX, e.clientY);
@@ -582,8 +602,11 @@
             }
         }, { passive: false });
         
-        window.addEventListener('mousedown', () => AudioSys.init());
-        window.addEventListener('touchstart', () => AudioSys.init());
+        // Listeners for robust audio unlocking
+        window.addEventListener('mousedown', unlockAudio);
+        window.addEventListener('touchstart', unlockAudio);
+        window.addEventListener('keydown', unlockAudio);
+        window.addEventListener('click', unlockAudio);
 
         window.addEventListener('resize', () => {
             camera.aspect = window.innerWidth / window.innerHeight;
@@ -599,13 +622,14 @@
 
             const time = clock.getElapsedTime();
 
+            // Update Controls
+            controls.update();
+
             flowers.forEach(flower => {
                 flower.update(time, mouse);
             });
 
-            camera.position.x = Math.sin(time * 0.1) * 2;
-            camera.position.y = Math.cos(time * 0.1) * 2;
-            camera.lookAt(0, 0, 0);
+            // Removed hardcoded camera movement in favor of controls
 
             renderer.render(scene, camera);
         }
