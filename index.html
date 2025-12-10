@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geometric Wireframe Flowers</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #FDFBF7; /* Light cream background from reference */
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; /* Clean sans-serif */
+            user-select: none;
+        }
+        canvas {
+            display: block;
+        }
+        #title-container {
+            position: absolute;
+            top: 40px;
+            left: 40px;
+            pointer-events: none; /* Let clicks pass through to canvas */
+            z-index: 10;
+        }
+        h1 {
+            margin: 0;
+            font-size: 120px;
+            color: #2C4C66; /* Navy Blue */
+            line-height: 0.85;
+            text-transform: uppercase;
+            letter-spacing: -4px;
+            font-weight: 800;
+        }
+        h2 {
+            margin: 0;
+            font-size: 40px;
+            color: #E89B26; /* Orange */
+            font-weight: 700;
+            margin-top: 10px;
+            letter-spacing: -0.5px;
+        }
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #2C4C66;
+            pointer-events: none;
+            opacity: 0.5;
+            font-size: 14px;
+        }
+
+        /* Recorder UI */
+        #recorder-ui {
+            position: absolute;
+            bottom: 30px;
+            right: 40px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            z-index: 20;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+        }
+
+        #spiral-container {
+            position: relative;
+            width: 80px;
+            height: 80px;
+            cursor: pointer;
+            transition: transform 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        #spiral-container:hover {
+            transform: scale(1.1);
+        }
+
+        #spiral-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+
+        #rec-controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-top: 5px;
+        }
+
+        #rec-text {
+            color: #2C4C66;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            opacity: 0.8;
+            pointer-events: none;
+        }
+
+        #restart-btn {
+            background: none;
+            border: 1px solid #2C4C66;
+            color: #2C4C66;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0.6;
+            transition: all 0.2s;
+            padding: 0;
+            line-height: 1;
+        }
+
+        #restart-btn:hover {
+            opacity: 1;
+            background-color: #2C4C66;
+            color: #FDFBF7;
+        }
+
+        /* Mobile adjustments */
+        @media (max-width: 768px) {
+            h1 { font-size: 60px; }
+            h2 { font-size: 24px; }
+            #title-container { top: 20px; left: 20px; }
+            #recorder-ui { bottom: 20px; right: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="title-container">
+        <h1>Flowers</h1>
+        <h2>Floating</h2>
+    </div>
+    <div id="instructions">Move mouse or touch to disturb the garden</div>
+    
+    <div id="recorder-ui">
+        <div id="spiral-container" title="Click to Download Recording">
+            <canvas id="spiral-canvas" width="160" height="160" style="width: 80px; height: 80px;"></canvas>
+        </div>
+        <div id="rec-controls">
+            <span id="rec-text">Click spiral to save</span>
+            <button id="restart-btn" title="Restart Recording">↺</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // --- Configuration ---
+        const CONFIG = {
+            flowerCount: 60,
+            colors: [
+                0xE89B26, // Orange
+                0xE65A55, // Red/Coral
+                0x2C4C66, // Navy Blue
+                0xE6C229, // Mustard Yellow
+                0x2E615E, // Teal/Dark Green
+                0xF2A2A2, // Light Pink
+                0x4A6FA5  // Periwinkle
+            ],
+            background: 0xFDFBF7,
+            interactionRadius: 3, 
+            floatSpeed: 0.005
+        };
+
+        // --- UI & Recording System ---
+        const UISys = {
+            spiralValue: 0, // 0 to 1 growth
+            notesPlayed: 0,
+            canvas: document.getElementById('spiral-canvas'),
+            ctx: document.getElementById('spiral-canvas').getContext('2d'),
+            
+            init() {
+                this.drawSpiral();
+                
+                document.getElementById('spiral-container').addEventListener('click', () => {
+                    AudioSys.downloadRecording();
+                });
+
+                document.getElementById('restart-btn').addEventListener('click', () => {
+                    AudioSys.resetRecording();
+                    this.resetSpiral();
+                });
+            },
+
+            triggerGrowth() {
+                this.notesPlayed++;
+                // Accelerate growth: +5 per note instead of +1
+                // Increased cap to allow for longer sessions
+                this.spiralValue = Math.min(1000, this.spiralValue + 5);
+                this.drawSpiral();
+            },
+
+            resetSpiral() {
+                this.spiralValue = 0;
+                this.notesPlayed = 0;
+                this.drawSpiral();
+            },
+
+            drawSpiral() {
+                const ctx = this.ctx;
+                const w = this.canvas.width;
+                const h = this.canvas.height;
+                const cx = w / 2;
+                const cy = h / 2;
+                
+                ctx.clearRect(0, 0, w, h);
+                ctx.beginPath();
+                ctx.strokeStyle = '#2C4C66';
+                ctx.lineWidth = 3;
+                ctx.lineCap = 'round';
+
+                // Always draw at least a central dot
+                if (this.spiralValue === 0) {
+                    ctx.fillStyle = '#2C4C66';
+                    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+                    ctx.fill();
+                    return;
+                }
+
+                // Draw Spiral
+                // r = a + b * theta
+                // Adjusted math for a more pleasing expansion rate
+                const rotations = 1 + (this.spiralValue / 20); 
+                const maxAngle = Math.PI * 2 * rotations;
+                const step = 0.1;
+                
+                // Scale factor
+                const spacing = 2 + (this.spiralValue / 100); 
+
+                ctx.moveTo(cx, cy);
+                for (let angle = 0; angle < maxAngle; angle += step) {
+                    const radius = spacing * angle;
+                    const x = cx + radius * Math.cos(angle);
+                    const y = cy + radius * Math.sin(angle);
+                    
+                    // Allow it to fill closer to the edge (w/2 - 2)
+                    if (radius > w/2 - 2) break;
+                    
+                    ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+            }
+        };
+
+        // --- Audio System ---
+        const AudioSys = {
+            ctx: null,
+            isInit: false,
+            dest: null,
+            recorder: null,
+            chunks: [],
+            isRecording: false,
+
+            // Pentatonic Scale
+            frequencies: [
+                261.63, // C4 (Orange)
+                293.66, // D4 (Red)
+                329.63, // E4 (Navy)
+                392.00, // G4 (Mustard)
+                440.00, // A4 (Teal)
+                523.25, // C5 (Pink)
+                587.33  // D5 (Periwinkle)
+            ],
+
+            init() {
+                if (this.isInit) return;
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                this.ctx = new AudioContext();
+                this.isInit = true;
+                
+                // Setup Nodes
+                this.createReverb();
+                this.setupRecorder();
+                UISys.init();
+            },
+
+            createReverb() {
+                const sampleRate = this.ctx.sampleRate;
+                const length = sampleRate * 1.5;
+                const impulse = this.ctx.createBuffer(2, length, sampleRate);
+                const left = impulse.getChannelData(0);
+                const right = impulse.getChannelData(1);
+
+                for (let i = 0; i < length; i++) {
+                    const decay = Math.pow(1 - i / length, 2);
+                    left[i] = (Math.random() * 2 - 1) * decay;
+                    right[i] = (Math.random() * 2 - 1) * decay;
+                }
+
+                this.convolver = this.ctx.createConvolver();
+                this.convolver.buffer = impulse;
+                
+                this.compressor = this.ctx.createDynamicsCompressor();
+                this.compressor.threshold.setValueAtTime(-24, this.ctx.currentTime);
+                this.compressor.knee.setValueAtTime(30, this.ctx.currentTime);
+                this.compressor.ratio.setValueAtTime(12, this.ctx.currentTime);
+                this.compressor.attack.setValueAtTime(0.003, this.ctx.currentTime);
+                this.compressor.release.setValueAtTime(0.25, this.ctx.currentTime);
+
+                this.convolver.connect(this.compressor);
+                this.compressor.connect(this.ctx.destination);
+            },
+
+            setupRecorder() {
+                // Create a destination node to capture the audio stream
+                this.dest = this.ctx.createMediaStreamDestination();
+                this.compressor.connect(this.dest);
+
+                try {
+                    this.recorder = new MediaRecorder(this.dest.stream);
+                    
+                    this.recorder.ondataavailable = (e) => {
+                        if (e.data.size > 0) {
+                            this.chunks.push(e.data);
+                        }
+                    };
+
+                    this.recorder.start();
+                    this.isRecording = true;
+                } catch (e) {
+                    console.error("MediaRecorder not supported or failed", e);
+                }
+            },
+
+            resetRecording() {
+                if (this.recorder && this.recorder.state !== 'inactive') {
+                    this.recorder.stop();
+                    this.chunks = []; // Clear current chunks
+                    setTimeout(() => {
+                        this.recorder.start();
+                    }, 100);
+                } else {
+                    this.chunks = [];
+                }
+            },
+
+            downloadRecording() {
+                if (!this.recorder) return;
+                
+                // Stop to gather final data
+                this.recorder.requestData(); 
+                
+                // Small delay to ensure data available fires
+                setTimeout(() => {
+                    const blob = new Blob(this.chunks, { 'type' : 'audio/webm; codecs=opus' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    document.body.appendChild(a);
+                    a.style = 'display: none';
+                    a.href = url;
+                    a.download = 'flower-garden-melody.webm';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    
+                    // Reset after download
+                    this.resetRecording();
+                    UISys.resetSpiral();
+                }, 200);
+            },
+
+            playNote(colorIndex, type) {
+                if (!this.isInit) return;
+                if (this.ctx.state === 'suspended') this.ctx.resume();
+
+                // Update UI Spiral
+                UISys.triggerGrowth();
+
+                const osc = this.ctx.createOscillator();
+                const gain = this.ctx.createGain();
+                
+                const freq = this.frequencies[colorIndex % this.frequencies.length];
+                osc.frequency.value = freq;
+
+                if (type === 'daisy') {
+                    osc.type = 'sine';
+                } else if (type === 'tulip') {
+                    osc.type = 'triangle';
+                } else {
+                    osc.type = 'sine';
+                    osc.detune.value = (Math.random() - 0.5) * 20; 
+                }
+
+                const now = this.ctx.currentTime;
+                gain.gain.setValueAtTime(0, now);
+                gain.gain.linearRampToValueAtTime(0.15, now + 0.05); 
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 1.5); 
+
+                osc.connect(gain);
+                gain.connect(this.compressor); 
+                
+                const reverbSend = this.ctx.createGain();
+                reverbSend.gain.value = 0.4;
+                gain.connect(reverbSend);
+                reverbSend.connect(this.convolver);
+
+                osc.start(now);
+                osc.stop(now + 2.0);
+            }
+        };
+
+        // --- Setup Scene ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(CONFIG.background);
+        scene.fog = new THREE.FogExp2(CONFIG.background, 0.02);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+        camera.position.z = 15;
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        document.body.appendChild(renderer.domElement);
+
+        // --- Interaction State ---
+        const mouse = new THREE.Vector2(-100, -100);
+        
+        // --- Flower Generators ---
+        function createWireframeMesh(geometry, color) {
+            const edges = new THREE.EdgesGeometry(geometry);
+            const material = new THREE.LineBasicMaterial({ 
+                color: color, 
+                linewidth: 2 
+            });
+            return new THREE.LineSegments(edges, material);
+        }
+
+        class Flower {
+            constructor() {
+                this.mesh = new THREE.Group();
+                const colorIdx = Math.floor(Math.random() * CONFIG.colors.length);
+                this.color = CONFIG.colors[colorIdx];
+                this.colorIndex = colorIdx; 
+                
+                const typeRand = Math.random();
+                if (typeRand < 0.33) {
+                    this.type = 'daisy';
+                    this.buildDaisy();
+                } else if (typeRand < 0.66) {
+                    this.type = 'tulip';
+                    this.buildTulip();
+                } else {
+                    this.type = 'pompom';
+                    this.buildPomPom();
+                }
+
+                this.mesh.position.x = (Math.random() - 0.5) * 40;
+                this.mesh.position.y = (Math.random() - 0.5) * 40;
+                this.mesh.position.z = (Math.random() - 0.5) * 20;
+
+                this.mesh.rotation.x = Math.random() * Math.PI;
+                this.mesh.rotation.y = Math.random() * Math.PI;
+
+                const scale = 1.0 + Math.random() * 1.2;
+                this.mesh.scale.set(scale, scale, scale);
+
+                this.basePosition = this.mesh.position.clone();
+                this.velocity = new THREE.Vector3(
+                    (Math.random() - 0.5) * 0.01,
+                    (Math.random() - 0.5) * 0.01,
+                    0
+                );
+                this.rotationSpeed = {
+                    x: (Math.random() - 0.5) * 0.01,
+                    y: (Math.random() - 0.5) * 0.01
+                };
+                this.agitated = 0;
+                this.timeOffset = Math.random() * 100;
+                
+                this.isHovered = false;
+            }
+
+            buildDaisy() {
+                const centerGeo = new THREE.IcosahedronGeometry(0.3, 0);
+                const center = createWireframeMesh(centerGeo, 0x333333);
+                this.mesh.add(center);
+
+                const petalCount = 6 + Math.floor(Math.random() * 4);
+                const petalGeo = new THREE.SphereGeometry(0.5, 4, 4);
+                petalGeo.scale(0.3, 1, 0.1); 
+                petalGeo.translate(0, 0.5, 0); 
+
+                for (let i = 0; i < petalCount; i++) {
+                    const petal = createWireframeMesh(petalGeo, this.color);
+                    const angle = (i / petalCount) * Math.PI * 2;
+                    petal.rotation.z = -angle;
+                    this.mesh.add(petal);
+                }
+            }
+
+            buildTulip() {
+                const cupGeo = new THREE.CylinderGeometry(0.4, 0.2, 0.8, 5, 1, true);
+                const cup = createWireframeMesh(cupGeo, this.color);
+                this.mesh.add(cup);
+
+                const innerGeo = new THREE.ConeGeometry(0.15, 0.6, 4);
+                innerGeo.translate(0, -0.1, 0);
+                const inner = createWireframeMesh(innerGeo, 0xffaa00);
+                this.mesh.add(inner);
+            }
+
+            buildPomPom() {
+                const outerGeo = new THREE.IcosahedronGeometry(0.6, 1);
+                const outer = createWireframeMesh(outerGeo, this.color);
+                this.mesh.add(outer);
+
+                const innerGeo = new THREE.IcosahedronGeometry(0.3, 0);
+                const inner = createWireframeMesh(innerGeo, 0xffffff);
+                this.mesh.add(inner);
+            }
+
+            update(time, mousePos) {
+                this.mesh.position.y = this.basePosition.y + Math.sin(time + this.timeOffset) * 0.5;
+                this.mesh.rotation.x += this.rotationSpeed.x;
+                this.mesh.rotation.y += this.rotationSpeed.y;
+
+                const screenPos = this.mesh.position.clone().project(camera);
+                const dist = Math.sqrt(
+                    Math.pow(screenPos.x - mousePos.x, 2) + 
+                    Math.pow(screenPos.y - mousePos.y, 2)
+                );
+                
+                const threshold = 0.3; 
+                const currentlyHovered = dist < threshold;
+
+                if (currentlyHovered && !this.isHovered) {
+                    AudioSys.playNote(this.colorIndex, this.type);
+                }
+                this.isHovered = currentlyHovered;
+
+                if (currentlyHovered) {
+                    this.agitated = THREE.MathUtils.lerp(this.agitated, 1, 0.1);
+                } else {
+                    this.agitated = THREE.MathUtils.lerp(this.agitated, 0, 0.05);
+                }
+
+                if (this.agitated > 0.01) {
+                    this.mesh.position.x = this.basePosition.x + (Math.random() - 0.5) * 0.2 * this.agitated;
+                    this.mesh.position.z = this.basePosition.z + (Math.random() - 0.5) * 0.2 * this.agitated;
+                    this.mesh.rotation.z += 0.1 * this.agitated;
+                    const s = 1 + (0.3 * this.agitated);
+                    this.mesh.scale.setScalar(s * (this.mesh.userData.originalScale || 1));
+                } else {
+                    this.mesh.position.x = THREE.MathUtils.lerp(this.mesh.position.x, this.basePosition.x, 0.1);
+                    if(!this.mesh.userData.originalScale) this.mesh.userData.originalScale = this.mesh.scale.x;
+                    const s = THREE.MathUtils.lerp(this.mesh.scale.x, this.mesh.userData.originalScale, 0.1);
+                    this.mesh.scale.setScalar(s);
+                }
+            }
+        }
+
+        // --- Init Garden ---
+        const flowers = [];
+        for (let i = 0; i < CONFIG.flowerCount; i++) {
+            const flower = new Flower();
+            flowers.push(flower);
+            scene.add(flower.mesh);
+        }
+
+        // --- Event Listeners ---
+        function updateMouse(x, y) {
+            mouse.x = (x / window.innerWidth) * 2 - 1;
+            mouse.y = -(y / window.innerHeight) * 2 + 1;
+            
+            if (!AudioSys.isInit) {
+                AudioSys.init();
+            }
+        }
+
+        window.addEventListener('mousemove', (e) => {
+            updateMouse(e.clientX, e.clientY);
+        });
+
+        window.addEventListener('touchmove', (e) => {
+            if (e.touches.length > 0) {
+                updateMouse(e.touches[0].clientX, e.touches[0].clientY);
+            }
+        }, { passive: false });
+        
+        window.addEventListener('mousedown', () => AudioSys.init());
+        window.addEventListener('touchstart', () => AudioSys.init());
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // --- Animation Loop ---
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const time = clock.getElapsedTime();
+
+            flowers.forEach(flower => {
+                flower.update(time, mouse);
+            });
+
+            camera.position.x = Math.sin(time * 0.1) * 2;
+            camera.position.y = Math.cos(time * 0.1) * 2;
+            camera.lookAt(0, 0, 0);
+
+            renderer.render(scene, camera);
+        }
+
+        animate();
+
+    </script>
+</body>
+</html>
